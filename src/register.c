@@ -23,6 +23,9 @@ static inline int do_register(struct io_uring *ring, unsigned int opcode,
 		fd = ring->ring_fd;
 	}
 
+#if __has_feature(memory_sanitizer)
+	// switch opcode .... (varies the type of arg)
+#endif
 	return __sys_io_uring_register(fd, opcode, arg, nr_args);
 }
 

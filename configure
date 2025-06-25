@@ -30,6 +30,8 @@ for opt do
   ;;
   --enable-sanitizer) use_sanitizer=yes
   ;;
+  --enable-mem-sanitizer) use_mem_sanitizer=yes
+  ;;
   *)
     echo "ERROR: unknown option $opt"
     echo "Try '$0 --help' for more information"
@@ -79,6 +81,7 @@ Options: [defaults in brackets after descriptions]
   --cxx=CMD                use CMD as the C++ compiler
   --use-libc               use libc for liburing (useful for hardening)
   --enable-sanitizer       compile liburing with the address and undefined behaviour sanitizers. (useful for debugging)
+  --enable-mem-sanitizer   compile liburing with the memory sanitizer. (useful for debugging)
 EOF
 exit 0
 fi
@@ -556,6 +559,15 @@ if test "$use_sanitizer" = "yes"; then
   print_config "use sanitizer" "yes"
 else
   print_config "use sanitizer" "no"
+fi
+if test "$use_mem_sanitizer" = "yes"; then
+  if test "$use_sanitizer" = "yes"; then
+    fatal "cannot combine --sanitizer (address and undefined behavior) with --enable-mem-sanitizer (memory)"
+  fi
+  output_sym "CONFIG_USE_MEM_SANITIZER"
+  print_config "use memory sanitizer" "yes"
+else
+  print_config "use memory sanitizer" "no"
 fi
 
 echo "CC=$cc" >> $config_host_mak

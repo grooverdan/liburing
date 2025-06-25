@@ -37,10 +37,12 @@ ifneq ($(MAKECMDGOALS),clean)
 include ../config-host.mak
 endif
 
+LINK_FLAGS=-Wl,-z,defs
 ifeq ($(CONFIG_USE_SANITIZER),y)
 	LINK_FLAGS=
-else
-	LINK_FLAGS=-Wl,-z,defs
+endif
+ifeq ($(CONFIG_USE_MEM_SANITIZER),y)
+	LINK_FLAGS=
 endif
 LINK_FLAGS+=$(LDFLAGS)
 
@@ -60,6 +62,14 @@ ifeq ($(CONFIG_USE_SANITIZER),y)
 	override CPPFLAGS += -fsanitize=address,undefined -g -fno-omit-frame-pointer -fno-optimize-sibling-calls
 	override LINK_FLAGS += -fsanitize=address,undefined
 	liburing_srcs += sanitize.c
+endif
+
+ifeq ($(CONFIG_USE_MEM_SANITIZER),y)
+	override CFLAGS += -fsanitize=memory -fno-omit-frame-pointer
+	override CPPFLAGS += -fsanitize=memory -fno-omit-frame-pointer
+	override LINK_FLAGS += -fsanitize=memory
+	override SO_CFLAGS += -fsanitize=memory
+	liburing_srcs += memsanitize.c
 endif
 
 override CPPFLAGS += -MT "$@" -MMD -MP -MF "$@.d"

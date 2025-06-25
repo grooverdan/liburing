@@ -8,6 +8,7 @@ include ../config-host.mak
 endif
 
 CPPFLAGS ?=
+LDFLAGS ?=
 
 override CPPFLAGS += \
 	-D_GNU_SOURCE \
@@ -31,11 +32,15 @@ ifeq ($(CONFIG_USE_SANITIZER),y)
 	XCFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -fno-optimize-sibling-calls
 endif
 
+ifeq ($(CONFIG_USE_MEM_SANITIZER),y)
+	XCFLAGS += -fsanitize=memory -fno-omit-frame-pointer
+	override LDFLAGS += -fsanitize=memory
+endif
+
 CXXFLAGS ?= $(CFLAGS)
 override CFLAGS += $(XCFLAGS) -DLIBURING_BUILD_TEST
 override CXXFLAGS += $(XCFLAGS) -std=c++11 -DLIBURING_BUILD_TEST
 
-LDFLAGS ?=
 override LDFLAGS += -L../src/ -luring -lpthread
 
 # Please keep this list sorted alphabetically.

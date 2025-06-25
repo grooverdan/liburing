@@ -19,6 +19,10 @@ ifeq ($(CONFIG_USE_SANITIZER),y)
 	override LDFLAGS += -fsanitize=address,undefined
 endif
 
+ifeq ($(CONFIG_USE_MEM_SANITIZER),y)
+	override LDFLAGS += -fsanitize=memory
+endif
+
 example_srcs := \
 	io_uring-close-test.c \
 	io_uring-cp.c \

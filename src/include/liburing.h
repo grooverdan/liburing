@@ -32,6 +32,14 @@
 #define IOURINGINLINE static inline
 #endif
 
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <sys/epoll.h>
+#endif
+
 #ifdef __alpha__
 /*
  * alpha and mips are the exceptions, all other architectures have
@@ -551,6 +559,9 @@ IOURINGINLINE void io_uring_prep_readv(struct io_uring_sqe *sqe, int fd,
 				       const struct iovec *iovecs,
 				       unsigned nr_vecs, __u64 offset)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(iovecs, sizeof(struct iovec *) * nr_vecs);
+#endif
 	io_uring_prep_rw(IORING_OP_READV, sqe, fd, iovecs, nr_vecs, offset);
 }
 
@@ -585,6 +596,11 @@ IOURINGINLINE void io_uring_prep_writev(struct io_uring_sqe *sqe, int fd,
 					const struct iovec *iovecs,
 					unsigned nr_vecs, __u64 offset)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(iovecs, sizeof(struct iovec *) * nr_vecs);
+	for (unsigned v = 0; v < nr_vecs; v++)
+		__msan_check_mem_is_initialized(iovecs[v].iov_base, iovecs[v].iov_len);
+#endif
 	io_uring_prep_rw(IORING_OP_WRITEV, sqe, fd, iovecs, nr_vecs, offset);
 }
 
@@ -601,6 +617,9 @@ IOURINGINLINE void io_uring_prep_write_fixed(struct io_uring_sqe *sqe, int fd,
 					     const void *buf, unsigned nbytes,
 					     __u64 offset, int buf_index)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized((char *) buf + offset, nbytes);
+#endif
 	io_uring_prep_rw(IORING_OP_WRITE_FIXED, sqe, fd, buf, nbytes, offset);
 	sqe->buf_index = (__u16) buf_index;
 }
@@ -618,6 +637,9 @@ IOURINGINLINE void io_uring_prep_writev_fixed(struct io_uring_sqe *sqe, int fd,
 IOURINGINLINE void io_uring_prep_recvmsg(struct io_uring_sqe *sqe, int fd,
 					 struct msghdr *msg, unsigned flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(msg, sizeof(*msg));
+#endif
 	io_uring_prep_rw(IORING_OP_RECVMSG, sqe, fd, msg, 1, 0);
 	sqe->msg_flags = flags;
 }
@@ -634,6 +656,14 @@ IOURINGINLINE void io_uring_prep_sendmsg(struct io_uring_sqe *sqe, int fd,
 					 const struct msghdr *msg,
 					 unsigned flags)
 {
+#if __has_feature(memory_sanitizer)
+	/* flags, the last field, is unused */
+	__msan_check_mem_is_initialized(msg, offsetof(struct msghdr, msg_flags));
+	__msan_check_mem_is_initialized(msg->msg_name, msg->msg_namelen);
+	__msan_check_mem_is_initialized(msg->msg_iov, sizeof(*msg->msg_iov) * msg->msg_iovlen);
+	if (msg->msg_control)
+		__msan_check_mem_is_initialized(msg->msg_control, msg->msg_controllen);
+#endif
 	io_uring_prep_rw(IORING_OP_SENDMSG, sqe, fd, msg, 1, 0);
 	sqe->msg_flags = flags;
 }
@@ -797,6 +827,25 @@ IOURINGINLINE void io_uring_prep_bind(struct io_uring_sqe *sqe, int fd,
 				      struct sockaddr *addr,
 				      socklen_t addrlen)
 {
+#if __has_feature(memory_sanitizer)
+	struct sockaddr_un *addr_un = (struct sockaddr_un *) addr;
+	switch (addr_un->sun_family) {
+	case AF_INET:
+		__msan_check_mem_is_initialized(addr, sizeof(struct sockaddr_in));
+		break;
+	case AF_INET6:
+		__msan_check_mem_is_initialized(addr, sizeof(struct sockaddr_in6));
+		break;
+	case AF_UNIX:
+		if (addr_un->sun_path[0] == '\0') // abstract socket
+			__msan_check_mem_is_initialized(addr_un->sun_path, addrlen - offsetof(struct sockaddr_un, sun_path));
+		else
+			__msan_check_mem_is_initialized(addr_un->sun_path, strlen(addr_un->sun_path));
+		break;
+	default:
+		__msan_check_mem_is_initialized(addr, sizeof(struct sockaddr));
+	}
+#endif
 	io_uring_prep_rw(IORING_OP_BIND, sqe, fd, addr, 0, addrlen);
 }
 
@@ -811,6 +860,9 @@ IOURINGINLINE void io_uring_prep_epoll_wait(struct io_uring_sqe *sqe, int fd,
 					    struct epoll_event *events,
 					    int maxevents, unsigned flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(events, sizeof(*events) * maxevents);
+#endif
 	io_uring_prep_rw(IORING_OP_EPOLL_WAIT, sqe, fd, events, maxevents, 0);
 	sqe->rw_flags = flags;
 }
@@ -819,6 +871,9 @@ IOURINGINLINE void io_uring_prep_files_update(struct io_uring_sqe *sqe,
 					      int *fds, unsigned nr_fds,
 					      int offset)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(fds, (nr_fds - offset) * sizeof(int));
+#endif
 	io_uring_prep_rw(IORING_OP_FILES_UPDATE, sqe, -1, fds, nr_fds,
 				(__u64) offset);
 }
@@ -835,6 +890,9 @@ IOURINGINLINE void io_uring_prep_openat(struct io_uring_sqe *sqe, int dfd,
 					const char *path, int flags,
 					mode_t mode)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+#endif
 	io_uring_prep_rw(IORING_OP_OPENAT, sqe, dfd, path, mode, 0);
 	sqe->open_flags = (__u32) flags;
 }
@@ -898,6 +956,9 @@ IOURINGINLINE void io_uring_prep_write(struct io_uring_sqe *sqe, int fd,
 				       const void *buf, unsigned nbytes,
 				       __u64 offset)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(buf, nbytes);
+#endif
 	io_uring_prep_rw(IORING_OP_WRITE, sqe, fd, buf, nbytes, offset);
 }
 
@@ -906,6 +967,9 @@ IOURINGINLINE void io_uring_prep_statx(struct io_uring_sqe *sqe, int dfd,
 				       const char *path, int flags,
 				       unsigned mask, struct statx *statxbuf)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+#endif
 	io_uring_prep_rw(IORING_OP_STATX, sqe, dfd, path, mask,
 				uring_ptr_to_u64(statxbuf));
 	sqe->statx_flags = (__u32) flags;
@@ -943,6 +1007,10 @@ IOURINGINLINE void io_uring_prep_madvise64(struct io_uring_sqe *sqe, void *addr,
 IOURINGINLINE void io_uring_prep_send(struct io_uring_sqe *sqe, int sockfd,
 				      const void *buf, size_t len, int flags)
 {
+#if __has_feature(memory_sanitizer)
+	if (buf)
+		__msan_check_mem_is_initialized(buf, len);
+#endif
 	io_uring_prep_rw(IORING_OP_SEND, sqe, sockfd, buf, (__u32) len, 0);
 	sqe->msg_flags = (__u32) flags;
 }
@@ -958,6 +1026,9 @@ IOURINGINLINE void io_uring_prep_send_set_addr(struct io_uring_sqe *sqe,
 						const struct sockaddr *dest_addr,
 						__u16 addr_len)
 {
+#if __has_feature(memory_sanitizer)
+	// socket_valid(dest_addr, addr_len)
+#endif
 	sqe->addr2 = (unsigned long)(const void *)dest_addr;
 	sqe->addr_len = addr_len;
 }
@@ -975,6 +1046,10 @@ IOURINGINLINE void io_uring_prep_send_zc(struct io_uring_sqe *sqe, int sockfd,
 					 const void *buf, size_t len, int flags,
 					 unsigned zc_flags)
 {
+#if __has_feature(memory_sanitizer)
+	if (buf)
+		__msan_check_mem_is_initialized(buf, len);
+#endif
 	io_uring_prep_rw(IORING_OP_SEND_ZC, sqe, sockfd, buf, (__u32) len, 0);
 	sqe->msg_flags = (__u32) flags;
 	sqe->ioprio = zc_flags;
@@ -995,6 +1070,9 @@ IOURINGINLINE void io_uring_prep_sendmsg_zc(struct io_uring_sqe *sqe, int fd,
 					    const struct msghdr *msg,
 					    unsigned flags)
 {
+#if __has_feature(memory_sanitizer)
+	// valid_msg(msg)
+#endif
 	io_uring_prep_sendmsg(sqe, fd, msg, flags);
 	sqe->opcode = IORING_OP_SENDMSG_ZC;
 }
@@ -1032,6 +1110,9 @@ io_uring_recvmsg_validate(void *buf, int buf_len, struct msghdr *msgh)
 				sizeof(struct io_uring_recvmsg_out);
 	if (buf_len < 0 || (unsigned long)buf_len < header)
 		return NULL;
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(buf, header);
+#endif
 	return (struct io_uring_recvmsg_out *)buf;
 }
 
@@ -1093,6 +1174,10 @@ io_uring_recvmsg_payload_length(struct io_uring_recvmsg_out *o,
 IOURINGINLINE void io_uring_prep_openat2(struct io_uring_sqe *sqe, int dfd,
 					const char *path, struct open_how *how)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+	__msan_check_mem_is_initialized(how, sizeof(*how));
+#endif
 	io_uring_prep_rw(IORING_OP_OPENAT2, sqe, dfd, path, sizeof(*how),
 				(uint64_t) (uintptr_t) how);
 }
@@ -1144,6 +1229,9 @@ IOURINGINLINE void io_uring_prep_shutdown(struct io_uring_sqe *sqe, int fd,
 IOURINGINLINE void io_uring_prep_unlinkat(struct io_uring_sqe *sqe, int dfd,
 					  const char *path, int flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+#endif
 	io_uring_prep_rw(IORING_OP_UNLINKAT, sqe, dfd, path, 0, 0);
 	sqe->unlink_flags = (__u32) flags;
 }
@@ -1158,6 +1246,10 @@ IOURINGINLINE void io_uring_prep_renameat(struct io_uring_sqe *sqe, int olddfd,
 					  const char *oldpath, int newdfd,
 					  const char *newpath, unsigned int flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(oldpath, strlen(oldpath));
+	__msan_check_mem_is_initialized(newpath, strlen(newpath));
+#endif
 	io_uring_prep_rw(IORING_OP_RENAMEAT, sqe, olddfd, oldpath,
 				(__u32) newdfd,
 				(uint64_t) (uintptr_t) newpath);
@@ -1182,6 +1274,9 @@ IOURINGINLINE void io_uring_prep_sync_file_range(struct io_uring_sqe *sqe,
 IOURINGINLINE void io_uring_prep_mkdirat(struct io_uring_sqe *sqe, int dfd,
 					const char *path, mode_t mode)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+#endif
 	io_uring_prep_rw(IORING_OP_MKDIRAT, sqe, dfd, path, mode, 0);
 }
 
@@ -1195,6 +1290,9 @@ IOURINGINLINE void io_uring_prep_symlinkat(struct io_uring_sqe *sqe,
 					   const char *target, int newdirfd,
 					   const char *linkpath)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(target, strlen(target));
+#endif
 	io_uring_prep_rw(IORING_OP_SYMLINKAT, sqe, newdirfd, target, 0,
 				(uint64_t) (uintptr_t) linkpath);
 }
@@ -1203,6 +1301,9 @@ IOURINGINLINE void io_uring_prep_symlink(struct io_uring_sqe *sqe,
 					 const char *target,
 					 const char *linkpath)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(linkpath, strlen(linkpath));
+#endif
 	io_uring_prep_symlinkat(sqe, target, AT_FDCWD, linkpath);
 }
 
@@ -1210,6 +1311,10 @@ IOURINGINLINE void io_uring_prep_linkat(struct io_uring_sqe *sqe, int olddfd,
 					const char *oldpath, int newdfd,
 					const char *newpath, int flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(oldpath, strlen(oldpath));
+	__msan_check_mem_is_initialized(newpath, strlen(newpath));
+#endif
 	io_uring_prep_rw(IORING_OP_LINKAT, sqe, olddfd, oldpath, (__u32) newdfd,
 				(uint64_t) (uintptr_t) newpath);
 	sqe->hardlink_flags = (__u32) flags;
@@ -1265,6 +1370,9 @@ IOURINGINLINE void io_uring_prep_getxattr(struct io_uring_sqe *sqe,
 					  const char *name, char *value,
 					  const char *path, unsigned int len)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+#endif
 	io_uring_prep_rw(IORING_OP_GETXATTR, sqe, 0, name, len,
 				(__u64) (uintptr_t) value);
 	sqe->addr3 = (__u64) (uintptr_t) path;
@@ -1276,6 +1384,11 @@ IOURINGINLINE void io_uring_prep_setxattr(struct io_uring_sqe *sqe,
 					  const char *path, int flags,
 					  unsigned int len)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(path, strlen(path));
+	__msan_check_mem_is_initialized(name, strlen(name));
+	__msan_check_mem_is_initialized(value, len);
+#endif
 	io_uring_prep_rw(IORING_OP_SETXATTR, sqe, 0, name, len,
 				(__u64) (uintptr_t) value);
 	sqe->addr3 = (__u64) (uintptr_t) path;
@@ -1295,6 +1408,10 @@ IOURINGINLINE void io_uring_prep_fsetxattr(struct io_uring_sqe *sqe, int fd,
 					   const char *name, const char	*value,
 					   int flags, unsigned int len)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(name, strlen(value));
+	__msan_check_mem_is_initialized(value, len);
+#endif
 	io_uring_prep_rw(IORING_OP_FSETXATTR, sqe, fd, name, len,
 				(__u64) (uintptr_t) value);
 	sqe->xattr_flags = flags;
@@ -1368,6 +1485,9 @@ IOURINGINLINE void io_uring_prep_futex_wake(struct io_uring_sqe *sqe,
 					    uint64_t mask, uint32_t futex_flags,
 					    unsigned int flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(futex, sizeof(*futex) * val);
+#endif
 	io_uring_prep_rw(IORING_OP_FUTEX_WAKE, sqe, futex_flags, futex, 0, val);
 	sqe->futex_flags = flags;
 	sqe->addr3 = mask;
@@ -1378,17 +1498,27 @@ IOURINGINLINE void io_uring_prep_futex_wait(struct io_uring_sqe *sqe,
 					    uint64_t mask, uint32_t futex_flags,
 					    unsigned int flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(futex, sizeof(*futex) * val);
+#endif
 	io_uring_prep_rw(IORING_OP_FUTEX_WAIT, sqe, futex_flags, futex, 0, val);
 	sqe->futex_flags = flags;
 	sqe->addr3 = mask;
 }
 
+#if __has_feature(memory_sanitizer)
+#include <linux/futex.h>
+#else
 struct futex_waitv;
+#endif
 IOURINGINLINE void io_uring_prep_futex_waitv(struct io_uring_sqe *sqe,
 					     struct futex_waitv *futex,
 					     uint32_t nr_futex,
 					     unsigned int flags)
 {
+#if __has_feature(memory_sanitizer)
+	__msan_check_mem_is_initialized(futex, sizeof(*futex) * nr_futex);
+#endif
 	io_uring_prep_rw(IORING_OP_FUTEX_WAITV, sqe, 0, futex, nr_futex, 0);
 	sqe->futex_flags = flags;
 }

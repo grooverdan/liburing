@@ -75,6 +75,10 @@ static int _io_uring_get_cqe(struct io_uring *ring,
 
 		ret = __io_uring_peek_cqe(ring, &cqe, &nr_available);
 		if (ret) {
+#if __has_feature(memory_sanitizer)
+			__msan_unpoison(cqe, sizeof(*cqe));
+			__msan_unpoison(&nr_available, sizeof(nr_available));
+#endif
 			if (!err)
 				err = ret;
 			break;
@@ -106,8 +110,14 @@ static int _io_uring_get_cqe(struct io_uring *ring,
 			if (!cqe && arg->ts && !err)
 				err = -ETIME;
 			break;
+#if __has_feature(memory_sanitizer)
+			if (arg->ts)
+				__msan_check_mem_is_initialized(&arg->ts, sizeof(arg->ts));
+#endif
 		}
-
+#if __has_feature(memory_sanitizer)
+		__msan_check_mem_is_initialized(ring->sq.sqes, data->submit);
+#endif
 		ret = __sys_io_uring_enter2(ring->enter_ring_fd, data->submit,
 					    data->wait_nr, flags, data->arg,
 					    data->sz);
